@@ -122,6 +122,9 @@ textarea.cm-in{resize:vertical;min-height:84px;line-height:1.7}
 .cm-del:hover{background:rgba(255,107,129,.3)}
 .cm-item p{margin:0;font-size:.92rem;line-height:1.8;color:#dfe7ff;white-space:pre-wrap;word-break:break-word}
 .cm-empty{text-align:center;color:var(--muted);padding:14px;font-size:.9rem}
+.modal.wide{width:min(900px,100%)}
+.player{position:relative;width:100%;aspect-ratio:16/9;border-radius:18px;overflow:hidden;background:#000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
+.player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .toast{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:90}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -202,7 +205,7 @@ textarea.cm-in{resize:vertical;min-height:84px;line-height:1.7}
 /* ---------- البيانات ---------- */
 var CATS=[['all','الكل'],['new','حديث الإصدار'],['action','أكشن'],['drama','دراما'],['anime','أنمي']];
 var DATA=[
- {id:1,t:'ظل الصحراء',type:'movie',y:2026,r:8.4,c:['action','new'],g:['#f59e0b','#7c2d12'],e:'🏜️',d:'مطاردة مشوّقة عبر الكثبان بين حارس قافلة ومهرّب يخفي سراً قديماً.',dur:'128 د'},
+ {id:1,t:'Extraction',type:'movie',y:2020,r:8.3,c:['action','new'],g:['#f59e0b','#7c2d12'],e:'🎬',d:'مرتزق عمليات جريئة في مهمة خطيرة لإنقاذ ابن زعيم جريمة مختطف وسط صراع مسلح.',dur:'116 د',img:'f1.jpg',embed:'https://archive.org/embed/m_20261113'},
  {id:2,t:'بغداد ليلاً',type:'series',y:2026,r:8.9,c:['drama','new'],g:['#0ea5e9','#1e1b4b'],e:'🌃',d:'ست عائلات تتقاطع حكاياتها في ليلة واحدة تغيّر مصير حيّ كامل.',dur:'12 حلقة'},
  {id:3,t:'سيف الغيوم',type:'series',y:2025,r:9.1,c:['anime','action'],g:['#a78bfa','#312e81'],e:'⚔️',d:'فتى يرث سيفاً يتحكم بالسحب ويبدأ رحلة لإنقاذ مملكة السماء.',dur:'24 حلقة'},
  {id:4,t:'آخر محطة',type:'movie',y:2026,r:7.8,c:['drama','new'],g:['#14b8a6','#134e4a'],e:'🚉',d:'مسافران غريبان يعلقان في محطة قطار مهجورة ويكتشفان أن لقاءهما لم يكن صدفة.',dur:'104 د'},
@@ -271,7 +274,10 @@ ov.addEventListener('click',function(e){
   if(a==='close'){closeModal()}
   else if(a==='confirm'){SFX.ok();var fn=modal._onConfirm;closeModal(true);if(fn)fn()}
   else if(a==='fav'){toggleFav(+b.dataset.id);b.textContent=isFav(+b.dataset.id)?'💔 إزالة من المفضلة':'❤️ أضف للمفضلة'}
-  else if(a==='play'){var it=byId(+b.dataset.id);closeModal(true);setTimeout(function(){alertBox('🎞️','جارٍ تجهيز العرض','هذه نسخة تجريبية للواجهة. اربط «'+it.t+'» بمصدر الفيديو الخاص بك لبدء التشغيل.',{confirm:'حسناً، فهمت'});SFX.ok()},200)}
+  else if(a==='play'){var it=byId(+b.dataset.id);
+    if(it.embed&&/^https:\/\//.test(it.embed)){SFX.ok();playerView(it)}
+    else{closeModal(true);setTimeout(function(){alertBox('🎞️','جارٍ تجهيز العرض','هذه نسخة تجريبية للواجهة. اربط «'+it.t+'» بمصدر الفيديو الخاص بك لبدء التشغيل.',{confirm:'حسناً، فهمت'});SFX.ok()},200)}}
+  else if(a==='back'){SFX.click();details(byId(+b.dataset.id))}
 });
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal()});
 
@@ -371,9 +377,11 @@ function filtered(){
     return true;
   });
 }
+function bg(x,pos){var g='linear-gradient(160deg,'+x.g[0]+','+x.g[1]+')';
+  return x.img?'background:url(\''+String(x.img).replace(/[\'"\\()<>]/g,'')+'\') '+(pos||'center')+'/cover no-repeat,'+g:'background:'+g}
 function card(x){
-  return '<button class="card" data-id="'+x.id+'"><div class="poster" style="background:linear-gradient(160deg,'+x.g[0]+','+x.g[1]+')">'+
-   '<span class="em">'+x.e+'</span><span class="tag">'+(x.type==='movie'?'فيلم':'مسلسل')+'</span>'+
+  return '<button class="card" data-id="'+x.id+'"><div class="poster" style="'+bg(x)+'">'+
+   (x.img?'':'<span class="em">'+x.e+'</span>')+'<span class="tag">'+(x.type==='movie'?'فيلم':'مسلسل')+'</span>'+
    '<span class="fav" data-fav="'+x.id+'" role="button" aria-label="مفضلة">'+(isFav(x.id)?'❤️':'🤍')+'</span>'+
    '<div class="tt">'+x.t+'</div></div>'+
    '<div class="meta"><strong>'+x.t+'</strong><span class="rate">★ '+x.r.toFixed(1)+'</span></div></button>';
@@ -389,9 +397,13 @@ function render(){
   $$('.nav[data-nav]').forEach(function(n){n.classList.toggle('on',n.dataset.nav===st.nav)});
   $$('.chip').forEach(function(c){c.classList.toggle('on',c.dataset.cat===st.cat)});
 }
+function playerView(it){
+  openModal('<h3>'+it.t+'</h3><div class="player"><iframe src="'+it.embed+'" title="'+it.t.replace(/"/g,'')+'" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade" loading="lazy"></iframe></div>'+
+   '<div class="acts"><button class="btn" data-a="back" data-id="'+it.id+'">↩ التفاصيل</button><button class="btn dng" data-a="close">إغلاق</button></div>');
+  modal.classList.add('wide');
+}
 function details(x){
-  openModal('<div class="ph" style="background:linear-gradient(160deg,'+x.g[0]+','+x.g[1]+')">'+x.e+'</div>'+
-   '<h3>'+x.t+'</h3><div class="badges"><span class="rate">★ '+x.r.toFixed(1)+'</span><span>'+x.y+'</span><span>'+x.dur+'</span><span>'+(x.type==='movie'?'فيلم':'مسلسل')+'</span></div>'+
+  openModal('<h3>'+x.t+'</h3><div class="badges"><span class="rate">★ '+x.r.toFixed(1)+'</span><span>'+x.y+'</span><span>'+x.dur+'</span><span>'+(x.type==='movie'?'فيلم':'مسلسل')+'</span></div>'+
    '<p>'+x.d+'</p><div class="acts"><button class="btn pri" data-a="play" data-id="'+x.id+'">▶ تشغيل</button>'+
    '<button class="btn" data-a="fav" data-id="'+x.id+'">'+(isFav(x.id)?'💔 إزالة من المفضلة':'❤️ أضف للمفضلة')+'</button>'+
    '<button class="btn dng" data-a="close">إغلاق</button></div>'+cmSection(x.id));
