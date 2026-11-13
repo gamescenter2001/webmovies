@@ -37,8 +37,8 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .spacer{flex:1}
 /* Main */
 main{flex:1;min-width:0}
-.top{display:flex;gap:12px;align-items:center;border-radius:22px;padding:10px 12px;position:sticky;top:calc(18px + env(safe-area-inset-top,0px));z-index:20}
-.search{flex:1;display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:16px;padding:0 14px}
+.top{display:flex;max-width:100%;gap:12px;align-items:center;border-radius:22px;padding:10px 12px;position:sticky;top:calc(18px + env(safe-area-inset-top,0px));z-index:20}
+.search{flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:16px;padding:0 14px}
 .search input{flex:1;background:none;border:0;outline:0;color:var(--ink);font:inherit;padding:12px 0;min-width:0}
 .search input::placeholder{color:var(--muted)}
 .ib{width:44px;height:44px;border-radius:14px;border:1px solid var(--line);background:var(--glass);display:grid;place-items:center;font-size:1.1rem;transition:.2s;flex-shrink:0}
@@ -126,18 +126,35 @@ textarea.cm-in{resize:vertical;min-height:84px;line-height:1.7}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:860px){
-  .layout{padding:10px;gap:0}
+  :root{--sx:1}
+  :root[dir="ltr"]{--sx:-1}
+  html,body{max-width:100%;overflow-x:hidden}
+  @supports (overflow:clip){html,body{overflow-x:clip}}
+  .layout{padding:10px;gap:0;width:100%;max-width:100%;min-height:100dvh}
+  main{width:100%;max-width:100%}
   .menu-btn{display:grid}
-  .side{position:fixed;top:0;bottom:0;right:0;height:auto;width:min(280px,82vw);border-radius:26px 0 0 26px;padding-top:calc(20px + env(safe-area-inset-top,0px));
-    transform:translateX(105%);transition:transform .3s ease;background:rgba(15,26,70,.7)}
-  .side.open{transform:none}
-  .scrim{position:fixed;inset:0;z-index:25;background:rgba(2,6,20,.5);backdrop-filter:blur(4px);display:none}
+  /* القائمة الجانبية: تُثبَّت على بداية الاتجاه (اليمين في RTL) وتنزلق منها وإليها */
+  .side{position:fixed;top:0;bottom:0;inset-inline-start:0;inset-inline-end:auto;height:auto;width:min(280px,82vw);max-width:100%;
+    border-radius:0;border-start-end-radius:26px;border-end-end-radius:26px;
+    padding-top:calc(20px + env(safe-area-inset-top,0px));padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));overflow-y:auto;
+    transform:translateX(calc(110% * var(--sx)));visibility:hidden;pointer-events:none;
+    transition:transform .3s ease,visibility 0s linear .3s;background:rgba(15,26,70,.78)}
+  .side.open{transform:none;visibility:visible;pointer-events:auto;transition:transform .3s ease,visibility 0s}
+  .scrim{position:fixed;inset:0;z-index:25;background:rgba(2,6,20,.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:none}
   .scrim.show{display:block}
-  .top{top:calc(10px + env(safe-area-inset-top,0px))}
+  /* الهيدر: يبقى داخل عرض الشاشة دون تمرير أفقي */
+  .top{top:calc(10px + env(safe-area-inset-top,0px));width:100%;max-width:100%;padding:8px;gap:8px;border-radius:20px}
+  .top .ib{width:40px;height:40px;border-radius:12px;font-size:1rem}
+  .search{min-width:0;padding:0 10px;gap:6px;border-radius:14px}
+  .search input{font-size:16px;padding:10px 0}
   .hero{padding:22px;min-height:210px}
-  .grid{grid-template-columns:repeat(2,1fr);gap:12px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .grid>*{min-width:0}
 }
+@media (max-width:360px){.top{gap:6px;padding:6px}.top .ib{width:36px;height:36px}}
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 </head>
 <body>
 <div class="layout">
@@ -258,49 +275,81 @@ ov.addEventListener('click',function(e){
 });
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal()});
 
-/* ---------- نظام التعليقات (localStorage) ---------- */
-var CKEY='layla_comments';
-function loadC(){try{return JSON.parse(localStorage.getItem(CKEY)||'{}')||{}}catch(e){return{}}}
-function saveC(o){try{localStorage.setItem(CKEY,JSON.stringify(o));return true}catch(e){return false}}
-function getC(id){var l=loadC()[id];return Array.isArray(l)?l:[]}
+/* ---------- نظام التعليقات العام (Firebase Realtime Database SDK) ----------
+   المسار: comments/<item.id>/<pushId> = {n:اسم, m:نص, ts:وقت, d:معرّف الجهاز}
+   قواعد الأمان المقترحة (Firebase Console ← Realtime Database ← Rules):
+   { "rules": { "comments": { "$movie": { ".read": true, "$cid": {
+       ".write": "!data.exists() || !newData.exists()",
+       ".validate": "newData.hasChildren(['n','m','ts','d']) && newData.child('n').isString() && newData.child('n').val().length<=24 && newData.child('m').isString() && newData.child('m').val().length<=400 && newData.child('d').isString()" } } } } }
+   ملاحظة: معرّف الجهاز يخفي زر الحذف عن غير صاحب التعليق في الواجهة؛ للحماية الصارمة على الخادم استخدم Firebase Anonymous Auth. */
+var FB_CFG={databaseURL:'https://mus2-e4917-default-rtdb.firebaseio.com'};
+var fdb=null;
+try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp(FB_CFG);fdb=firebase.database()}}catch(e){fdb=null}
+var CLOUD=!!fdb,CM={},curRef=null,curId=null;
+var DEV=(function(){var k='layla_device',v='';try{v=localStorage.getItem(k)||''}catch(e){}
+  if(!v){v=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():'d-'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);try{localStorage.setItem(k,v)}catch(e){}}
+  return v})();
 function esc(t){return String(t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function fmtT(ts){try{return new Date(ts).toLocaleString('ar',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}catch(e){return new Date(ts).toLocaleString()}}
-function cmListHTML(id){
-  var l=getC(id).slice().sort(function(a,b){return b.ts-a.ts});
-  if(!l.length)return '<div class="cm-empty">لا توجد تعليقات بعد. كن أول من يعلّق ✨</div>';
-  return l.map(function(c){return '<div class="cm-item"><div class="cm-top"><span class="cm-av">'+esc(c.n.charAt(0))+'</span><b>'+esc(c.n)+'</b><time>'+fmtT(c.ts)+'</time>'+
-    '<button class="cm-del" type="button" data-cdel="'+esc(c.i)+'" aria-label="حذف التعليق" title="حذف">✕</button></div><p>'+esc(c.m)+'</p></div>'}).join('');
+/* احتياطي محلي إذا تعذّر تحميل مكتبة Firebase */
+function lsAll(){try{return JSON.parse(localStorage.getItem('layla_comments_pub')||'{}')||{}}catch(e){return{}}}
+function lsSave(o){try{localStorage.setItem('layla_comments_pub',JSON.stringify(o))}catch(e){}}
+function snapList(v){return Object.keys(v||{}).map(function(k){var c=v[k]||{};return{k:k,n:String(c.n||''),m:String(c.m||''),ts:+c.ts||0,d:String(c.d||'')}})}
+function cmListHTML(id,loading){
+  var l=(CM[id]||[]).slice().sort(function(a,b){return b.ts-a.ts});
+  if(!l.length)return '<div class="cm-empty">'+(loading&&!CM[id]?'جارٍ تحميل التعليقات…':'لا توجد تعليقات بعد. كن أول من يعلّق ✨')+'</div>';
+  return l.map(function(c){var mine=c.d===DEV;return '<div class="cm-item"><div class="cm-top"><span class="cm-av">'+esc(c.n.charAt(0)||'?')+'</span><b>'+esc(c.n)+'</b><time>'+fmtT(c.ts)+'</time>'+
+    (mine?'<button class="cm-del" type="button" data-cdel="'+esc(c.k)+'" aria-label="حذف تعليقك" title="حذف">🗑️</button>':'')+'</div><p>'+esc(c.m)+'</p></div>'}).join('');
 }
 function cmSection(id){
   var nm='';try{nm=localStorage.getItem('layla_user')||''}catch(e){}
-  return '<section class="cm" data-cid="'+id+'"><h4>💬 تعليقات المشاهدين <small id="cmCount">'+getC(id).length+'</small></h4>'+
+  setTimeout(function(){cmListen(id)},30);
+  return '<section class="cm" data-cid="'+id+'"><h4>💬 تعليقات المشاهدين <small id="cmCount">'+(CM[id]?CM[id].length:'…')+'</small></h4>'+
+   (CLOUD?'':'<div class="cm-note err">⚠️ تعذّر تحميل Firebase — يعمل النظام محلياً مؤقتاً.</div>')+
    '<form class="cm-form" id="cmForm" novalidate><input class="cm-in" id="cmName" maxlength="24" placeholder="اسم المتابع" autocomplete="nickname" value="'+esc(nm)+'">'+
    '<textarea class="cm-in" id="cmText" maxlength="400" placeholder="اكتب تعليقك هنا…"></textarea>'+
-   '<button class="btn pri" type="submit">✍️ إضافة تعليق / Add Comment</button><div class="cm-note" id="cmNote" aria-live="polite"></div></form>'+
-   '<div class="cm-list" id="cmList">'+cmListHTML(id)+'</div></section>';
+   '<button class="btn pri" id="cmSend" type="submit">✍️ إضافة تعليق / Add Comment</button><div class="cm-note" id="cmNote" aria-live="polite"></div></form>'+
+   '<div class="cm-list" id="cmList">'+cmListHTML(id,true)+'</div></section>';
 }
 var noteT=null;
-function cmNote(msg,kind){var n=$('#cmNote');if(!n)return;n.textContent=msg;n.className='cm-note '+kind;clearTimeout(noteT);noteT=setTimeout(function(){n.textContent='';n.className='cm-note'},2400)}
-function cmRefresh(id){var l=$('#cmList');if(l)l.innerHTML=cmListHTML(id);var c=$('#cmCount');if(c)c.textContent=getC(id).length}
+function cmNote(msg,kind){var n=$('#cmNote');if(!n)return;n.textContent=msg;n.className='cm-note '+kind;clearTimeout(noteT);noteT=setTimeout(function(){n.textContent='';n.className='cm-note'},2600)}
+function cmRender(id){var sec=$('#modal .cm');if(!sec||+sec.dataset.cid!==id)return;$('#cmList').innerHTML=cmListHTML(id);$('#cmCount').textContent=(CM[id]||[]).length}
+/* مستمع لحظي: أي تعليق جديد من أي زائر يظهر فوراً */
+function cmDetach(){if(curRef){curRef.off();curRef=null}curId=null}
+function cmListen(id){
+  cmDetach();
+  if(!CLOUD){CM[id]=lsAll()[id]||[];cmRender(id);return}
+  curId=id;curRef=fdb.ref('comments/'+id);
+  curRef.on('value',function(snap){CM[id]=snapList(snap.val());cmRender(id)},function(){cmNote('تعذّر الاتصال بقاعدة البيانات. تحقق من قواعد الأمان.','err');cmRender(id)});
+}
+var _closeModal=closeModal;
+closeModal=function(silent){cmDetach();return _closeModal(silent)};
+var lastSend=0;
 ov.addEventListener('submit',function(e){
   var f=e.target.closest('#cmForm');if(!f)return;e.preventDefault();
-  var id=+f.closest('.cm').dataset.cid,nI=$('#cmName'),tI=$('#cmText');
+  var id=+f.closest('.cm').dataset.cid,nI=$('#cmName'),tI=$('#cmText'),btn=$('#cmSend');
   var n=nI.value.trim(),m=tI.value.trim();
   if(!m){tI.classList.remove('bad');void tI.offsetWidth;tI.classList.add('bad');tI.focus();SFX.warn();cmNote('الرجاء كتابة تعليق قبل الإرسال.','err');return}
   if(!n){nI.classList.remove('bad');void nI.offsetWidth;nI.classList.add('bad');nI.focus();SFX.warn();cmNote('الرجاء إدخال اسمك أولاً.','err');return}
-  tI.classList.remove('bad');nI.classList.remove('bad');
-  var all=loadC(),l=Array.isArray(all[id])?all[id]:[];
-  l.push({i:Date.now().toString(36)+Math.random().toString(36).slice(2,6),n:n,m:m,ts:Date.now()});all[id]=l;
-  if(!saveC(all)){SFX.warn();cmNote('تعذّر حفظ التعليق على هذا الجهاز.','err');return}
-  try{localStorage.setItem('layla_user',n)}catch(x){}
-  tI.value='';SFX.ok();cmRefresh(id);cmNote('تمت إضافة تعليقك بنجاح ✅','ok');
-  var ls=$('#cmList');if(ls)ls.scrollTop=0;
+  if(Date.now()-lastSend<3000){SFX.warn();cmNote('انتظر لحظات قبل إرسال تعليق آخر.','err');return}
+  tI.classList.remove('bad');nI.classList.remove('bad');lastSend=Date.now();btn.disabled=true;
+  var c={n:n,m:m,ts:Date.now(),d:DEV},done;
+  if(CLOUD){done=fdb.ref('comments/'+id).push(c)}
+  else{var a=lsAll(),l=a[id]||[];c.k='l'+Date.now().toString(36);l.push(c);a[id]=l;lsSave(a);CM[id]=l;cmRender(id);done=Promise.resolve()}
+  tI.value='';
+  done.then(function(){
+    try{localStorage.setItem('layla_user',n)}catch(x){}
+    SFX.ok();cmNote('تم نشر تعليقك بنجاح ✅','ok');var ls=$('#cmList');if(ls)ls.scrollTop=0;
+  }).catch(function(){tI.value=m;SFX.warn();cmNote('تعذّر إرسال التعليق. تحقق من الاتصال والقواعد.','err')}).then(function(){btn.disabled=false});
 });
 ov.addEventListener('click',function(e){
   var d=e.target.closest('[data-cdel]');if(!d)return;
-  var id=+d.closest('.cm').dataset.cid,all=loadC();
-  all[id]=getC(id).filter(function(c){return c.i!==d.dataset.cdel});
-  saveC(all);SFX.click();cmRefresh(id);cmNote('تم حذف التعليق.','ok');
+  var id=+d.closest('.cm').dataset.cid,k=d.dataset.cdel,c=(CM[id]||[]).filter(function(x){return x.k===k})[0];
+  if(!c||c.d!==DEV)return; /* لا حذف إلا لصاحب التعليق */
+  var p;
+  if(CLOUD)p=fdb.ref('comments/'+id+'/'+k).remove();
+  else{var a=lsAll();a[id]=(a[id]||[]).filter(function(x){return x.k!==k});lsSave(a);CM[id]=a[id];cmRender(id);p=Promise.resolve()}
+  p.then(function(){SFX.click();cmNote('تم حذف تعليقك.','ok')}).catch(function(){SFX.warn();cmNote('تعذّر الحذف.','err')});
 });
 
 
